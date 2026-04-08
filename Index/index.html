@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MX World ULTRA REAL</title>
+<style>
+body{margin:0;overflow:hidden;background:#000;}
+#ui{position:fixed;bottom:0;width:100%;display:flex;justify-content:space-between;padding:10px;}
+button{padding:16px;font-size:14px;border:none;border-radius:12px;background:#222;color:white;opacity:0.9;}
+</style>
+</head>
+<body>
+<div id="ui">
+  <button id="brake">Brake</button>
+  <button id="wheelie">⬆</button>
+  <button id="throttle">Gas</button>
+  <button id="left">⟲</button>
+  <button id="right">⟳</button>
+  <button id="endo">⬇</button>
+  <button id="trick">Trick</button>
+  <button id="respawn">Respawn</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/RGBELoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
+<script>
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,5000);
+
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled=true;
+document.body.appendChild(renderer.domElement);
+
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;
+
+// HDR SKY (PUT YOUR FILE NAME HERE)
+const rgbeLoader=new THREE.RGBELoader();
+rgbeLoader.load('sky.hdr',function(texture){
+ texture.mapping=THREE.EquirectangularReflectionMapping;
+ scene.environment=texture;
+ scene.background=texture;
+});
+
+// LIGHT
+const sun=new THREE.DirectionalLight(0xffffff,1.5);
+sun.position.set(100,200,100);
+sun.castShadow=true;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x555555));
+
+// GROUND TEXTURE (PUT YOUR FILE NAME HERE)
+const texLoader=new THREE.TextureLoader();
+const groundTex=texLoader.load('ground.jpg');
+groundTex.wrapS=groundTex.wrapT=THREE.RepeatWrapping;
+groundTex.repeat.set(120,20);
+
+const geo=new THREE.PlaneGeometry(5000,500,300,60);
+geo.rotateX(-Math.PI/2);
+for(let i=0;i<geo.attributes.position.count;i++){
+ let x=geo.attributes.position.getX(i);
+ let z=geo.attributes.position.getZ(i);
+ let y=Math.sin(x*0.01)*8 + Math.cos(z*0.02)*3;
+ geo.attributes.position.setY(i,y);
+}
+geo.computeVertexNormals();
+
+const ground=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({map:groundTex}));
+scene.add(ground);
+
+function getHeight(x,z){
+ return Math.sin(x*0.01)*8 + Math.cos(z*0.02)*3;
+}
+
+// LOAD BIKE + RIDER
+const loader=new THREE.GLTFLoader();
+let bike;
+loader.load('bike.glb',function(gltf){
+ bike=gltf.scene;
+ bike.scale.set(1,1,1);
+
+ // LOAD RIDER MODEL (ADD rider.glb TO YOUR FILES)
+ loader.load('rider.glb',function(riderGltf){
+   const rider=riderGltf.scene;
+   rider.scale.set(1,1,1);
+
+   // position rider on bike
+   rider.position.set(0,1,0);
+
+   bike.add(rider);
+ });
+
+ scene.add(bike);
+});
+
+// LOAD TREE MODEL (PUT YOUR FILE NAME HERE)
+loader.load('tree.glb',function(gltf){
+ for(let i=0;i<100;i++){
+   const tree=gltf.scene.clone();
+   let x=Math.random()*4000-2000;
+   let z=Math.random()*200-100;
+   tree.position.set(x,getHeight(x,z),z);
+   scene.add(tree);
+ }
+});
+
+// SIMPLE PHYSICS
+let speed=0,velY=0,steer=0;
+let spawnPoint=new THREE.Vector3(0,5,0);
+let doingTrick=false;
+let throttle=0,brake=0;
+
+function animate(){
+ requestAnimationFrame(animate);
+ if(!bike) return;
+
+ if(throttle) speed+=0.02;
+ if(brake) speed-=0.05;
+ speed*=0.99;
+
+ bike.rotation.y+=steer*(speed*0.05);
+ bike.position.x+=Math.cos(bike.rotation.y)*speed*10;
+ bike.position.z+=Math.sin(bike.rotation.y)*speed*10;
+
+ velY-=0.04;
+ bike.position.y+=velY;
+
+ let groundY=getHeight(bike.position.x,bike.position.z)+1;
+ let onGround=false;
+
+ if(bike.position.y<=groundY){
+  bike.position.y=groundY;
+  velY=0;
+  onGround=true;
+ }
+
+ // save spawn point when on ground
+ if(onGround && speed<0.5){
+   spawnPoint.copy(bike.position);
+ }
+
+ // rider physics + tricks
+ if(bike.children.length>0){
+   bike.children.forEach(rider=>{
+
+     // lean
+     rider.rotation.z = -steer * speed * 0.5;
+
+     // stand/sit
+     rider.position.y = onGround ? 1.2 : 1.5;
+
+     // suspension bounce
+     rider.position.y += Math.sin(Date.now()*0.01)*(onGround?0.05:0.1);
+
+     // trick system
+     if(doingTrick && !onGround){
+       rider.rotation.x = -1.2;
+       rider.rotation.y += 0.2;
+     } else {
+       rider.rotation.x = 0;
+     }
+
+   });
+ }
+
+ controls.target.copy(bike.position);
+ controls.update();
+
+ renderer.render(scene,camera);
+}
+
+function hold(el,on,off){el.addEventListener('touchstart',on);el.addEventListener('touchend',off);} 
+hold(document.getElementById('throttle'),()=>throttle=1,()=>throttle=0);
+hold(document.getElementById('brake'),()=>brake=1,()=>brake=0);
+hold(document.getElementById('left'),()=>steer=-1,()=>steer=0);
+hold(document.getElementById('right'),()=>steer=1,()=>steer=0);
+
+// trick button
+hold(document.getElementById('trick'),()=>doingTrick=true,()=>doingTrick=false);
+
+// respawn button
+document.getElementById('respawn').addEventListener('click',()=>{
+ if(!bike) return;
+ bike.position.copy(spawnPoint);
+ bike.rotation.set(0,0,0);
+ speed=0;
+ velY=0;
+});
+
+animate();
+</script>
+</body>
+</html>
